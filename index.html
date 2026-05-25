@@ -545,7 +545,7 @@ hr {
 <body>
 
 <!-- 游戏容器 -->
-<div id="version-btn" style="position:fixed;top:8px;right:12px;z-index:150;cursor:pointer;font-size:12px;color:var(--text-secondary);background:var(--bg-card);padding:2px 10px;border-radius:10px;border:1px solid var(--border);" onclick="showVersionInfo()">V1.3</div>
+<div id="version-btn" style="position:fixed;top:8px;right:12px;z-index:150;cursor:pointer;font-size:12px;color:var(--text-secondary);background:var(--bg-card);padding:2px 10px;border-radius:10px;border:1px solid var(--border);" onclick="showVersionInfo()">V1.4</div>
 
 <div id="game-container">
   <!-- 角色创建 -->
@@ -806,6 +806,11 @@ function newGameState() {
     },
     _missedOrdersNoHeatmap: 0, // 热力图失效期间错过的派单数
     _lastMissedOrderRealTime: 0, // 上次错过派单的现实时间戳
+    // 酒测系统
+    _lastBreathTestDay: 0, // 上次酒测的游戏日索引
+    _breathTestPassed: false, // 是否已通过酒测（初始需要酒测）
+    _flyCardCount: 0, // 发名片次数（报单加成用）
+    _todayActiveMinutes: 0, // 今日非睡眠时间（分钟）
   };
 }
 
@@ -890,6 +895,8 @@ function advanceTime(minutes) {
   let oldDay = getGameDayIndex();
   let oldYear = getGameDate().year;
   G.time += minutes;
+  // 累加非睡眠时间（发名片、酒测、培训等操作消耗的时间）
+  G._todayActiveMinutes = (G._todayActiveMinutes || 0) + minutes;
   let newDay = getGameDayIndex();
   let newDate = getGameDate();
   let newYear = newDate.year;
@@ -897,6 +904,7 @@ function advanceTime(minutes) {
   // 自然日切换时重置在线时长
   if (newDay !== oldDay) {
     G._todaySleepMinutes = 0;
+    G._todayActiveMinutes = 0;
     for (let pk of ['DD','GD','E']) {
       G.platforms[pk].onlineMinutesToday = 0;
       if (G.platforms[pk].listening) {
@@ -1061,15 +1069,14 @@ function advanceTime(minutes) {
     return;
   }
 
-  // 强制睡眠检查：每天最少5小时睡眠
+  // 强制休息检查：每天非睡眠时间达到19小时（24-5）后强制休息5小时
   if (newDay === oldDay && !G.currentOrder) {
-    let t = getGameTime();
-    let todaySleep = G._todaySleepMinutes || 0;
-    if (todaySleep < 5 * 60 && t.h >= 19) {
-      let minutesInDay = G.time % (24 * 60);
-      let minutesToMidnight = (24 * 60) - minutesInDay + 1;
-      G._todaySleepMinutes = todaySleep + minutesToMidnight;
-      G.time += minutesToMidnight;
+    let activeMinutes = G._todayActiveMinutes || 0;
+    // 19小时 = 1140分钟，达到后强制休息
+    if (activeMinutes >= 19 * 60) {
+      let sleepMinutes = 5 * 60; // 强制休息5小时
+      G._todaySleepMinutes = (G._todaySleepMinutes || 0) + sleepMinutes;
+      G.time += sleepMinutes;
       // 强制休息跨日，重置平台听单时长
       for (let pk of ['DD','GD','E']) {
         G.platforms[pk].onlineMinutesToday = 0;
@@ -1079,8 +1086,8 @@ function advanceTime(minutes) {
           stopDispatchTimer(pk);
         }
       }
-      addLog('😴 扛不住了，强制休息到次日', 'info');
-      showModal('强制休息', '<p>😴 扛不住了，我得睡会儿</p><p style="font-size:13px;">今日睡眠不足5小时，已强制休息至次日</p>', [{text:'确定', cls:'btn-primary', action: function(){ closeModal(); renderMainMenu(); saveGame(); }}]);
+      addLog('😴 今日工作时间已满，强制休息5小时', 'info');
+      showModal('强制休息', '<p>😴 今日工作时间已满</p><p style="font-size:13px;">今日非睡眠时间已达19小时，已强制休息5小时</p>', [{text:'确定', cls:'btn-primary', action: function(){ closeModal(); renderMainMenu(); saveGame(); }}]);
       return;
     }
   }
@@ -1512,7 +1519,7 @@ function processMonthly_v2() {
   // 回头客检查
   G.returnCustomers = G.returnCustomers.filter(rc => {
     if (getGameMonthIndex() >= rc.triggerMonth) {
-      if (chance(10)) { // 10%概率主动联系
+      if (chance(10 + G._flyCardCount)) { // 10%概率主动联系（发名片加成）
         let income = randInt(60, 120);
         showModal('回头客', '<p>' + rc.name + '联系您要求代驾服务！</p><p>预估收入：' + income + '元</p>', [
           {text:'接单', cls:'btn-success', action: function(){
@@ -1909,8 +1916,8 @@ function createCharacter() {
   G.player.luxury = randInt(10, 15);
 
   // 家庭系统初始化
-  // 30%概率有配偶
-  G.family.hasSpouse = chance(40);
+  // 60%概率有配偶
+  G.family.hasSpouse = chance(60);
   if (G.family.hasSpouse) {
     G.family.spouseName = G.player.gender === '男' ? generateFemaleName() : generateMaleName();
     G.family.marryMonth = 0; // 游戏开始时已婚
@@ -1918,8 +1925,8 @@ function createCharacter() {
     addLog('💑 已婚，配偶：' + G.family.spouseName, 'info');
   }
 
-  // 30%概率有房贷（与房租互斥）
-  if (chance(40)) {
+  // 70%概率有房贷（与房租互斥）
+  if (chance(70)) {
     G.family.hasMortgage = true;
     G.family.mortgageMonthly = randInt(2000, 8000);
     G.family.mortgageMonthsLeft = 120; // 固定10年
@@ -2372,6 +2379,41 @@ function rejoinPlatform(pk) {
 }
 
 // ================================================================
+// ===================== 酒测系统 ==================================
+// ================================================================
+
+function doBreathTest() {
+  let html = '<p style="font-size:14px;">🚔 开车不喝酒，喝酒不开车</p>';
+  html += '<p style="font-size:12px;color:var(--text-secondary);margin-top:8px;">酒测消耗1小时游戏时间</p>';
+  showModal('酒测', html, [
+    {text:'确认', cls:'btn-primary', action: function(){
+      closeModal();
+      advanceTime(60); // 消耗1小时
+      G._lastBreathTestDay = getGameDayIndex();
+      G._breathTestPassed = true;
+      addLog('✅ 酒测通过！下次酒测时间：7天后', 'good');
+      renderMainMenu();
+      renderScoreDisplay();
+      saveGame();
+      showModal('酒测通过', '<p style="color:var(--success);">✅ 酒测通过！可正常接单和抢单</p><p style="font-size:12px;color:var(--text-secondary);margin-top:4px;">下次酒测时间：7天后</p>',
+        [{text:'确定', cls:'btn-primary', action: closeModal}]);
+    }}
+  ]);
+}
+
+function doFlyCard() {
+  closeModal();
+  advanceTime(60); // 消耗1小时
+  G._flyCardCount = (G._flyCardCount || 0) + 1;
+  addLog('📇 在当地餐馆发名片（第' + G._flyCardCount + '次），报单成功率提升', 'good');
+  renderMainMenu();
+  renderScoreDisplay();
+  saveGame();
+  // 重新打开报单页面
+  startOfflineOrder();
+}
+
+// ================================================================
 // ===================== 线下报单系统 ==============================
 // ================================================================
 
@@ -2394,15 +2436,33 @@ function startOfflineOrder() {
   window._offlineNPCs = npcs;
   window._offlineLocation = currentLoc;
 
-  let html = vestBonus;
+  // 发名片按钮
+  let flyCardHTML = '<div style="margin-bottom:12px;padding:8px 12px;background:#1a2a1a;border:1px solid var(--gold);border-radius:6px;display:flex;align-items:center;justify-content:space-between;">';
+  flyCardHTML += '<div><p style="font-size:13px;color:var(--gold);">📇 去当地餐馆发名片</p>';
+  flyCardHTML += '<p style="font-size:11px;color:var(--text-secondary);">消耗1小时 | 报单成功率+0.5pp | 乘客电话联系+1pp</p></div>';
+  flyCardHTML += '<button class="btn-warning btn-small" onclick="doFlyCard()">发名片</button>';
+  flyCardHTML += '</div>';
+
+  let html = vestBonus + flyCardHTML;
 
   // 当前地点NPC
   if (currentLoc) {
     html += '<h4 style="margin-bottom:8px;">当前位置：' + currentLoc + '</h4>';
     html += '<div style="margin-bottom:12px;">';
     npcs.forEach((npc, i) => {
-      html += '<div class="npc-item"><span class="npc-desc">' + npc.desc + '（' + npc.hometown + '）</span>' +
-        '<button class="btn-success btn-small" onclick="talkToNPC(' + i + ')">询问</button></div>';
+      let canRecommend = false;
+      for (let pk of ['DD','GD','E']) {
+        if (G.platforms[pk].joined && G.platforms[pk].kickedOutMonth < 0) { canRecommend = true; break; }
+      }
+      canRecommend = canRecommend && npc.age < 50;
+      html += '<div class="npc-item" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">';
+      html += '<span class="npc-desc">' + npc.desc + '（' + npc.hometown + '，' + npc.age + '岁）</span>';
+      html += '<div style="display:flex;gap:4px;">';
+      html += '<button class="btn-success btn-small" onclick="talkToNPC(' + i + ')">询问代驾需求</button>';
+      if (canRecommend) {
+        html += '<button class="btn-warning btn-small" onclick="recommendPlatform(' + i + ')">推荐加入平台</button>';
+      }
+      html += '</div></div>';
     });
     html += '</div>';
   }
@@ -2438,8 +2498,19 @@ function goToLocation(loc, walkMin, bikeMin) {
 
   let html = '<p style="margin-bottom:10px;">到达' + loc + '，发现' + npcCount + '位潜在客户：</p>';
   npcs.forEach((npc, i) => {
-    html += '<div class="npc-item"><span class="npc-desc">' + npc.desc + '（' + npc.hometown + '）</span>' +
-      '<button class="btn-success btn-small" onclick="talkToNPC(' + i + ')">询问</button></div>';
+    let canRecommend = false;
+    for (let pk of ['DD','GD','E']) {
+      if (G.platforms[pk].joined && G.platforms[pk].kickedOutMonth < 0) { canRecommend = true; break; }
+    }
+    canRecommend = canRecommend && npc.age < 50;
+    html += '<div class="npc-item" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">';
+    html += '<span class="npc-desc">' + npc.desc + '（' + npc.hometown + '，' + npc.age + '岁）</span>';
+    html += '<div style="display:flex;gap:4px;">';
+    html += '<button class="btn-success btn-small" onclick="talkToNPC(' + i + ')">询问代驾需求</button>';
+    if (canRecommend) {
+      html += '<button class="btn-warning btn-small" onclick="recommendPlatform(' + i + ')">推荐加入平台</button>';
+    }
+    html += '</div></div>';
   });
 
   window._offlineNPCs = npcs;
@@ -2457,8 +2528,19 @@ function showNPCListAtLocation(loc) {
 
   let html = '<p style="margin-bottom:10px;">在' + loc + '继续寻找客户：</p>';
   npcs.forEach((npc, i) => {
-    html += '<div class="npc-item"><span class="npc-desc">' + npc.desc + '（' + npc.hometown + '）</span>' +
-      '<button class="btn-success btn-small" onclick="talkToNPC(' + i + ')">询问</button></div>';
+    let canRecommend = false;
+    for (let pk of ['DD','GD','E']) {
+      if (G.platforms[pk].joined && G.platforms[pk].kickedOutMonth < 0) { canRecommend = true; break; }
+    }
+    canRecommend = canRecommend && npc.age < 50;
+    html += '<div class="npc-item" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">';
+    html += '<span class="npc-desc">' + npc.desc + '（' + npc.hometown + '，' + npc.age + '岁）</span>';
+    html += '<div style="display:flex;gap:4px;">';
+    html += '<button class="btn-success btn-small" onclick="talkToNPC(' + i + ')">询问代驾需求</button>';
+    if (canRecommend) {
+      html += '<button class="btn-warning btn-small" onclick="recommendPlatform(' + i + ')">推荐加入平台</button>';
+    }
+    html += '</div></div>';
   });
 
   window._offlineNPCs = npcs;
@@ -2485,6 +2567,9 @@ function talkToNPC(idx) {
   if (G.player.gender === '女' && npc.gender === '女') rate += 20;
   if (G.player.gender !== npc.gender) rate -= 20;
 
+  // 发名片加成
+  rate += (G._flyCardCount || 0) * 0.5;
+
   rate = clamp(rate, 0, 100);
 
   advanceTime(5); // 询问耗时5分钟
@@ -2496,6 +2581,35 @@ function talkToNPC(idx) {
   } else {
     addLog('❌ ' + npc.desc + '拒绝了您的服务', 'bad');
     showModal('报单失败', '<p>' + npc.desc + '不需要代驾服务。</p><p style="color:var(--text-secondary);margin-top:8px;">成功率：' + rate + '%</p>',
+      [
+        {text:'继续询问其他人', cls:'btn-secondary', action: function(){ closeModal(); showNPCListAtLocation(window._offlineLocation); }},
+        {text:'换地方', cls:'btn-secondary', action: function(){ closeModal(); startOfflineOrder(); }}
+      ]);
+  }
+}
+
+function recommendPlatform(idx) {
+  let npc = window._offlineNPCs[idx];
+  let talk = G.player.talk;
+
+  // 推荐成功率
+  let rate;
+  if (talk >= 80) rate = 80;
+  else if (talk >= 50) rate = 50;
+  else rate = 30;
+
+  advanceTime(5); // 推荐耗时5分钟
+
+  if (chance(rate)) {
+    G.player.money += 1000;
+    G.totalIncome += 1000;
+    addIncomeRecord('平台推荐奖励', 1000);
+    addLog('💰 成功推荐' + npc.desc + '加入平台，获得奖励1000元！', 'good');
+    showModal('推荐成功', '<p style="color:var(--success);">成功推荐' + npc.desc + '加入平台！</p><p style="color:var(--gold);">获得平台推荐奖励：1000元</p>',
+      [{text:'继续', cls:'btn-primary', action: function(){ closeModal(); showNPCListAtLocation(window._offlineLocation); }}]);
+  } else {
+    addLog('❌ ' + npc.desc + '拒绝了您的推荐', 'bad');
+    showModal('推荐失败', '<p>' + npc.desc + '对加入平台不感兴趣。</p><p style="color:var(--text-secondary);margin-top:8px;">成功率：' + rate + '%</p>',
       [
         {text:'继续询问其他人', cls:'btn-secondary', action: function(){ closeModal(); showNPCListAtLocation(window._offlineLocation); }},
         {text:'换地方', cls:'btn-secondary', action: function(){ closeModal(); startOfflineOrder(); }}
@@ -3031,6 +3145,16 @@ function showOnlineOrder() {
     html += '</div>';
   }
 
+  // 酒测按钮
+  let daysSinceTest = getGameDayIndex() - (G._lastBreathTestDay || 0);
+  let needBreathTest = daysSinceTest >= 7 || !G._breathTestPassed;
+  if (needBreathTest) {
+    html += '<div style="margin-top:10px;padding:8px 12px;background:#2a1515;border:1px solid #cc4444;border-radius:6px;">';
+    html += '<p style="font-size:13px;color:#ff6b6b;">🚔 需要酒测才能听单和抢单</p>';
+    html += '<button class="btn-danger btn-small" style="margin-top:6px;" onclick="doBreathTest()">去酒测（消耗1小时）</button>';
+    html += '</div>';
+  }
+
   // 听单控制
   html += '<div style="margin-bottom:16px;">';
   for (let pk of ['DD','GD','E']) {
@@ -3042,11 +3166,16 @@ function showOnlineOrder() {
     if (p.lastTrainingMonth < mi - 1) {
       canListen = false;
     }
+    // 需要酒测时不能听单
+    if (needBreathTest) {
+      canListen = false;
+    }
     let btnCls = p.listening ? 'btn-danger' : (canListen ? 'btn-success' : 'btn-disabled');
     let btnText = p.listening ? '关闭听单' : '开启听单';
+    let listenBtnDisabled = needBreathTest && !p.listening ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : '';
     html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">' +
       '<span style="width:40px;">' + pk + '</span>' +
-      '<button class="' + btnCls + ' btn-small" onclick="toggleListening(\'' + pk + '\')">' + btnText + '</button>' +
+      '<button class="' + btnCls + ' btn-small" ' + listenBtnDisabled + ' onclick="' + (needBreathTest && !p.listening ? '' : 'toggleListening(\'' + pk + '\')') + '">' + btnText + '</button>' +
       '<span style="font-size:12px;color:var(--text-secondary);">代驾分:' + p.daijiaScore.toFixed(1) + ' 服务分:' + p.serviceScore.toFixed(1) + '</span>' +
       '</div>';
   }
@@ -3645,6 +3774,7 @@ function stopAllDispatchTimers() {
 }
 
 function dispatchSingleOrder(pk) {
+  if (!G._breathTestPassed) return;
   let p = G.platforms[pk];
   if (!p || !p.joined || !p.listening) return;
   // 过滤掉已清退的平台
@@ -4844,29 +4974,23 @@ function completeOnlineOrder(order) {
     }
   }
 
-  // 订单结束后检查是否需要补觉
-  let todaySleep = G._todaySleepMinutes || 0;
-  if (todaySleep < 5 * 60) {
-    let t = getGameTime();
-    if (t.h >= 19) {
-      let sleepNeeded = 5 * 60 - todaySleep;
-      let minutesInDay = G.time % (24 * 60);
-      let minutesToMidnight = (24 * 60) - minutesInDay + 1;
-      let actualSleep = Math.min(sleepNeeded, minutesToMidnight);
-      G._todaySleepMinutes = todaySleep + actualSleep;
-      G.time += actualSleep;
-      // 补觉跨日，重置平台听单时长
-      for (let pk of ['DD','GD','E']) {
-        G.platforms[pk].onlineMinutesToday = 0;
-        if (G.platforms[pk].listening) {
-          G.platforms[pk].listening = false;
-          G.platforms[pk]._listenStartGameMinutes = null;
-          stopDispatchTimer(pk);
-        }
+  // 订单结束后检查是否需要强制休息
+  let activeMinutes = G._todayActiveMinutes || 0;
+  if (activeMinutes >= 19 * 60) {
+    let sleepMinutes = 5 * 60;
+    G._todaySleepMinutes = (G._todaySleepMinutes || 0) + sleepMinutes;
+    G.time += sleepMinutes;
+    // 强制休息跨日，重置平台听单时长
+    for (let pk of ['DD','GD','E']) {
+      G.platforms[pk].onlineMinutesToday = 0;
+      if (G.platforms[pk].listening) {
+        G.platforms[pk].listening = false;
+        G.platforms[pk]._listenStartGameMinutes = null;
+        stopDispatchTimer(pk);
       }
-      addLog('😴 订单结束后扛不住了，强制休息到次日', 'info');
-      showModal('强制休息', '<p>😴 扛不住了，我得睡会儿</p><p style="font-size:13px;">今日睡眠不足5小时，已强制休息至次日</p>', [{text:'确定', cls:'btn-primary', action: function(){ closeModal(); renderMainMenu(); saveGame(); }}]);
     }
+    addLog('😴 订单结束后工作时间已满，强制休息5小时', 'info');
+    showModal('强制休息', '<p>😴 订单结束后工作时间已满</p><p style="font-size:13px;">今日非睡眠时间已达19小时，已强制休息5小时</p>', [{text:'确定', cls:'btn-primary', action: function(){ closeModal(); renderMainMenu(); saveGame(); }}]);
   }
 }
 
@@ -5070,7 +5194,43 @@ function doOfflineTraining(pk) {
   p.serviceScore = Math.min(100, p.serviceScore + 5);
   addLog('📚 完成' + pk + '线下培训，服务分+5', 'good');
 
-  showModal('培训完成', '<p style="color:var(--success);">线下培训完成！服务分+5</p><p>耗时：2小时</p>',
+  // 随机生成1-3条交通安全注意事项
+  let tips = [
+    '🚦 遵守交通信号灯，红灯停绿灯行，黄灯不抢行',
+    '🚗 保持安全车距，市区不低于50米，高速不低于100米',
+    '🚫 严禁酒后驾车、疲劳驾驶、超速行驶',
+    '📱 驾驶时不得使用手机，如有紧急情况请靠边停车后再使用',
+    '🛣️ 变道前提前打转向灯，观察后视镜确认安全后再变道',
+    '🌙 夜间行车注意开启近光灯，会车时切换为近光灯',
+    '🌧️ 雨雪天气减速慢行，增大跟车距离，避免急刹车',
+    '🚸 经过学校、医院等区域时减速慢行，注意避让行人',
+    '🔄 长途驾驶每2小时休息15分钟，避免疲劳驾驶',
+    '⛽ 出车前检查车辆状况：轮胎、刹车、灯光、油量',
+    '🅿️ 停车时注意观察周围环境，避免违停',
+    '⚠️ 遇到交通事故第一时间报警，保护现场并救助伤员',
+    '🚧 施工路段减速慢行，注意观察指示标志',
+    '🚌️ 公交车出站时注意避让，不得抢行',
+    '🚦 黄色虚线可以跨越，黄色实线严禁跨越',
+    '🔄 右转时注意避让直行行人和非机动车',
+    '📱 使用导航时提前规划路线，避免临时变道'
+  ];
+  let count = randInt(1, 3);
+  let selectedTips = [];
+  let available = tips.slice();
+  for (let i = 0; i < count && available.length > 0; i++) {
+    let idx = randInt(0, available.length - 1);
+    selectedTips.push(available[idx]);
+    available.splice(idx, 1);
+  }
+
+  let tipsHTML = selectedTips.map(function(t) { return '<li style="font-size:13px;line-height:1.8;">' + t + '</li>'; }).join('');
+
+  showModal('培训完成', 
+    '<p style="color:var(--success);font-weight:bold;">线下培训完成！服务分+5</p>' +
+    '<p style="font-size:12px;color:var(--text-secondary);">耗时：2小时</p>' +
+    '<div style="margin-top:12px;padding:10px;background:#1e1e1e;border-radius:6px;border:1px solid var(--border);">' +
+    '<p style="font-size:13px;font-weight:bold;margin-bottom:6px;">📖 交通安全注意事项</p>' +
+    '<ul style="padding-left:16px;margin:0;">' + tipsHTML + '</ul></div>',
     [{text:'确定', cls:'btn-primary', action: function(){ closeModal(); showTraining(); renderScoreDisplay(); saveGame(); }}]);
 }
 
@@ -5864,12 +6024,13 @@ function checkSleepHealth() {
   let days = Object.keys(G.sleepRecord);
   if (days.length < 30) return;
   let recentDays = days.slice(-30);
-  let badSleepDays = recentDays.filter(d => G.sleepRecord[d] < 6).length;
-  if (badSleepDays >= 5 && Math.random() < 0.5) {
+  // 检查工作过度：非睡眠时间过长（超过19小时视为工作过度）
+  let overworkDays = recentDays.filter(d => G.sleepRecord[d] > 19).length;
+  if (overworkDays >= 5 && Math.random() < 0.5) {
     let cost = randInt(300, 2000);
     G.player.money -= cost; G.totalExpense += cost;
     addLog('🤒 生病了！看病花费' + cost + '元', 'bad');
-    showModal('生病了', '<p style="color:var(--danger);">近期睡眠不足，生病了！</p><p>看病花费' + cost + '元</p>', [{text:'注意身体', cls:'btn-primary', action:closeModal}]);
+    showModal('生病了', '<p style="color:var(--danger);">近期工作过度，生病了！</p><p>看病花费' + cost + '元</p>', [{text:'注意身体', cls:'btn-primary', action:closeModal}]);
   }
 }
 
@@ -6092,6 +6253,13 @@ window.addEventListener('beforeunload', function() {
 
 function showVersionInfo() {
   showModal('版本信息',
+    '<h4 style="color:var(--accent);margin-bottom:12px;">260525 V1.4 迭代</h4>' +
+    '<ul style="font-size:13px;line-height:2;padding-left:20px;">' +
+    '<li>🚔 新增酒测系统：每7天需酒测，未通过无法接单</li>' +
+    '<li>📇 报单新增发名片功能，提升报单成功率和乘客联系概率</li>' +
+    '<li>📖 线下培训新增交通安全注意事项展示</li>' +
+    '</ul>' +
+    '<hr style="border-color:var(--border);margin:12px 0;">' +
     '<h4 style="color:var(--accent);margin-bottom:12px;">250502 V1.3 迭代</h4>' +
     '<ul style="font-size:13px;line-height:2;padding-left:20px;">' +
     '<li>🚗 新增万能司机、代泊车、取送车三种订单类型</li>' +
@@ -6117,7 +6285,7 @@ function showVersionInfo() {
     '<li>🔧 车损按驾驶能力分档，包工头模式全面重构</li>' +
     '</ul>' +
     '<div style="position:absolute;bottom:12px;left:20px;font-size:10px;color:#888;line-height:1.6;">' +
-    'PM Owner：鼠<br>RD Owner：Trae Solo<br>设计：鼠 & Trae Solo<br>QA：鼠 & Trae Solo' +
+    'PM Owner：鼠<br>RD Owner：Trae x GLM5.1<br>设计：Trae x GLM5.1<br>QA：鼠 & Trae x GLM5.1<br>特别感谢：代驾治理 & wy老师' +
     '</div>',
     [{text:'关闭', cls:'btn-secondary', action:closeModal}]
   );
