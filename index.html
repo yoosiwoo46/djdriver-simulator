@@ -1076,6 +1076,7 @@ function advanceTime(minutes) {
     if (activeMinutes >= 19 * 60) {
       let sleepMinutes = 5 * 60; // 强制休息5小时
       G._todaySleepMinutes = (G._todaySleepMinutes || 0) + sleepMinutes;
+      G._todayActiveMinutes = 0; // 重置活跃时间，避免反复弹窗
       G.time += sleepMinutes;
       // 强制休息跨日，重置平台听单时长
       for (let pk of ['DD','GD','E']) {
@@ -4979,6 +4980,7 @@ function completeOnlineOrder(order) {
   if (activeMinutes >= 19 * 60) {
     let sleepMinutes = 5 * 60;
     G._todaySleepMinutes = (G._todaySleepMinutes || 0) + sleepMinutes;
+    G._todayActiveMinutes = 0; // 重置活跃时间，避免反复弹窗
     G.time += sleepMinutes;
     // 强制休息跨日，重置平台听单时长
     for (let pk of ['DD','GD','E']) {
